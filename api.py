@@ -8,6 +8,7 @@ import uuid
 #  and running bot; Plugins which will do all stuff related to Plugins; I need to make it work good - You can use API
 #  functions without proving any Account data
 
+# TODO: Port to nio.Client
 
 class Api:
 
