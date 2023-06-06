@@ -1,90 +1,64 @@
 import nio
-import json as js
-import requests as rqs
-import uuid
+import asyncio as aio
+from uuid import uuid4
+from random import randint
 
-# TODO: Understand how Nio's Callbacks work. Own On Event Callback Implementation(If needed); Make 3 Different
-#  files: api.py - API, which will do all stuff related to nio.Api; Bot which will do all stuff related to callbacks
-#  and running bot; Plugins which will do all stuff related to Plugins; I need to make it work good - You can use API
-#  functions without proving any Account data
 
+# TODO Make 3 Different files: api.py - API, which will do all stuff related to nio.Api; Bot which will do all stuff
+#  related to callbacks and running bot; Plugins which will do all stuff related to Plugins; I need to make it work
+#  good - You can use API functions without proving any Account data
 # TODO: Port to nio.Client
+
+class NioRoomsNotFound(ValueError):
+    pass
+
 
 class Api:
 
-    def __init__(self, home: str, user: str, token: str):
+    def __init__(self, home: str, user: str, token: str, device_id: str,
+                 password: str, room: str, client_config: nio.AsyncClientConfig = None, store_path: str = "") -> None:
         """
         Class: Api
-        Wrapper around nio.Api class
+        Wrapper around nio.Client class
         :param home: (string) URL of Home server
         :param user: (string) Matrix ID of user
         :param token: (string) Access Token
+        :param device_id: (string) Device ID
+        :param password: (string) User's Password
+        :param room: (string) Room ID
+        :param client_config: (AsyncClientConfig) Client Configuration
+        :param store_path: (string) Path to directory which be used for storing State Storage
        """
         self.home = home
         self.user = user
         self.token = token
+        self.device_id = device_id
+        self.password = password
+        self.room = room
+        self.client_config = client_config
+        self.store_path = store_path
 
-    def _exec(self, request: tuple[str, str], request_data: dict = None) -> dict:
-        """
-        Protected Class Method, Sends Request from tuple
-        :param request: (tuple) Tuple of Request Type and URL
-        :param request_data: (dictionary)(optional) Extra data, which is used for special requests
-        :return: (dictionary) Returns Request's response
-        """
-        request_type, request_body = request
-        if request_type in ("GET", "POST", "PUT", "DELETE", "PATCH"):
-            method = getattr(rqs, request_type.lower())
-            if request_data is None:
-                response = method(f"{self.home}{request_body}").text
-            else:
-                response = method(f"{self.home}{request_body}", json=request_data).text
-            return js.loads(response)
+        if self.client_config:
+            self.client = nio.AsyncClient(self.home, self.user, self.device_id, config=self.client_config,
+                                          store_path=self.store_path)
+        else:
+            self.client = nio.AsyncClient(self.home, self.user, self.device_id, store_path=self.store_path)
 
-    def get_display_name(self) -> str:
-        """
-        High Level Wrapper around nio.Api.profile_get_displayname
-        :return: (string) Display Name of User
-        """
-        request = nio.Api.profile_get_displayname(self.user, self.token)
-        name = self._exec(request)
-        return name["displayname"]
-
-    def _send_event(self, event_type: str, room_id: str, body: dict) -> dict:
-        """
-        Low Level Wrapper around nio.Api.room_send
-        :param event_type: (string) Event Type
-        :param room_id: (string) Room ID
-        :param body: (dictionary) Dictionary which contains message data
-        :return: (dictionary) Event ID of Sent Message
-        """
-        request = nio.Api.room_send(self.token, room_id, event_type, body, str(uuid.uuid4()))
-        request_query = request[0], request[1]
-        request_data = body
-        response = self._exec(request_query, request_data)
-        return response
-
-    def send_text_message(self, room_id: str, content: str) -> dict:
-        """
-        Method to send Text Message to room with specified ID
-        :param room_id: (string) Room ID
-        :param content: (string) Message Content
-        :return: (dictionary) Event ID of sent message
-        """
-        return self._send_event("m.room.message", room_id, {"msgtype": "m.room.message", "body": content})
-
-    def get_room_members(self, room_id: str) -> dict:
-        """
-        Method to view members of Specified room
-        :param room_id: (string) Room ID
-        :return: (dictionary) Dictionary of all members in specified room
-        """
-        request = nio.Api.joined_members(self.token, room_id)
-        return self._exec(request)
-
-    def whoami(self) -> dict:
-        """
-        Get Information about Token's owner
-        :return: (dictionary) Information about Token's owner
-        """
-        request = nio.Api.whoami(self.token)
-        return self._exec(request)
+        loop = aio.get_event_loop()
+        bot = loop.run_until_complete(self.client.login(password=self.password))
+        print(bot)
+        join_sync = loop.run_until_complete(self.client.join(self.room))
+        sync = loop.run_until_complete(self.client.sync(timeout=3000))
+        messages = loop.run_until_complete(self.client.room_messages(self.room, sync.next_batch))
+        print(messages)
+        print(f".:{self.client.rooms}")
+        if not self.client.rooms:
+            raise NioRoomsNotFound("Rooms not Found!")
+        loop.run_until_complete(self.client.room_send(self.room, "m.room.message",
+                                                      {
+                                                          "msgtype": "m.text",
+                                                          "body": f"Random Number(Encrypted): {randint(0, 99999)}"
+                                                      }, str(uuid4()), ignore_unverified_devices=False
+                                                      ))
+        loop.run_until_complete(aio.sleep(15))
+        loop.run_until_complete(self.client.close())
